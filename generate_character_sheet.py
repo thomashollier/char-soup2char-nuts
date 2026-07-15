@@ -50,7 +50,7 @@ def run_pass(image, pipeline, seed, concurrency, output_dir, get_pose=False, ext
     return result.returncode == 0
 
 
-def run_presentation(image, name, desc, angles_dir, expressions_dir, outfits_dir, lighting_dir):
+def run_presentation(image, name, desc, angles_dir, expressions_dir, outfits_dir, lighting_dir, poses_dir):
     """Generate the PowerPoint presentation."""
     cmd = [
         sys.executable, "make_presentation.py",
@@ -59,6 +59,8 @@ def run_presentation(image, name, desc, angles_dir, expressions_dir, outfits_dir
         "--desc", desc,
         "--output-dir", angles_dir,
     ]
+    if poses_dir and os.path.isdir(poses_dir):
+        cmd.extend(["--poses-dir", poses_dir])
     if expressions_dir and os.path.isdir(expressions_dir):
         cmd.extend(["--expressions-dir", expressions_dir])
     if outfits_dir and os.path.isdir(outfits_dir):
@@ -83,8 +85,10 @@ def main():
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
     parser.add_argument("--concurrency", type=int, default=3, help="Parallel cloud jobs")
     parser.add_argument("--output", default=None, help="Base output directory (default: ./charsheet_{name})")
+    parser.add_argument("--angle-pipeline", default="2509", choices=["2509", "2511"],
+                        help="Multi-angle pipeline (default: 2509)")
     parser.add_argument("--skip", nargs="*", default=[],
-                        choices=["angles", "expressions", "outfits", "lighting", "presentation"],
+                        choices=["base", "angles", "poses", "expressions", "outfits", "lighting", "presentation"],
                         help="Skip specific passes")
     args = parser.parse_args()
 
@@ -92,7 +96,9 @@ def main():
     base_dir = args.output or f"./charsheet_{name_slug}"
     os.makedirs(base_dir, exist_ok=True)
 
+    base_pose_dir = os.path.join(base_dir, "base")
     angles_dir = os.path.join(base_dir, "angles")
+    poses_dir = os.path.join(base_dir, "poses_prompt")
     expressions_dir = os.path.join(base_dir, "expressions")
     outfits_dir = os.path.join(base_dir, "outfits")
     lighting_dir = os.path.join(base_dir, "lighting")
@@ -100,23 +106,55 @@ def main():
     start = time.time()
     results = {}
 
-    # Pass 1: Multi-angle with pose extraction
+    # Pass 0: Normalize the input into a clean, front-facing standing pose on a
+    # solid white background. Every downstream pass derives from THIS image so
+    # the whole sheet starts from one consistent reference.
+    source_image = args.image
+    if "base" not in args.skip:
+        ok = run_pass(args.image, "standing_relaxed", args.seed, args.concurrency,
+                      base_pose_dir)
+        base_candidate = os.path.join(base_pose_dir, "standing_relaxed.png")
+        if ok and os.path.exists(base_candidate):
+            source_image = base_candidate
+            results["base"] = True
+        else:
+            print("WARNING: base standing pose failed — falling back to the original input")
+            results["base"] = False
+    else:
+        print("Skipping: base (using original input as source)")
+
+    # Pass 1: Multi-angle. Uses the 2509 pipeline by default (no 2511).
+    # 2509 only has 3 distinct elevation prompts (worm's-eye / level / bird's-eye),
+    # so restrict it to -30/0/30 (8x3x3 = 72) to avoid redundant +60 duplicates.
+    # No DWPose skeleton extraction (get_pose=False).
     if "angles" not in args.skip:
-        ok = run_pass(args.image, "2511", args.seed, args.concurrency,
-                      angles_dir, get_pose=True)
+        # Use the "--opt=value" form: a bare "-30,..." would be misread by argparse
+        # as a flag because it starts with a minus.
+        angle_extra = ["--elevations=-30,0,30"] if args.angle_pipeline == "2509" else None
+        ok = run_pass(source_image, args.angle_pipeline, args.seed, args.concurrency,
+                      angles_dir, get_pose=False, extra_args=angle_extra)
         results["angles"] = ok
     else:
         print("Skipping: angles")
 
-    # Pass 2: Expressions
+    # Pass 2: Poses (16 base action poses)
+    if "poses" not in args.skip:
+        ok = run_pass(source_image, "poses_prompt", args.seed, args.concurrency,
+                      poses_dir, extra_args=["--poses", "base"])
+        results["poses"] = ok
+    else:
+        print("Skipping: poses")
+
+    # Pass 3: Expressions
     if "expressions" not in args.skip:
-        ok = run_pass(args.image, "expressions", args.seed, args.concurrency,
+        ok = run_pass(source_image, "expressions", args.seed, args.concurrency,
                       expressions_dir)
         results["expressions"] = ok
     else:
         print("Skipping: expressions")
 
-    # Pass 3: Outfits
+    # Pass 4: Outfits — derived from the ORIGINAL input pose (not the normalized
+    # base), so outfit changes are shown on the character's own hero pose.
     if "outfits" not in args.skip:
         ok = run_pass(args.image, "outfits", args.seed, args.concurrency,
                       outfits_dir)
@@ -124,7 +162,7 @@ def main():
     else:
         print("Skipping: outfits")
 
-    # Pass 4: Lighting
+    # Pass 5: Lighting — also derived from the ORIGINAL input pose.
     if "lighting" not in args.skip:
         ok = run_pass(args.image, "lighting", args.seed, args.concurrency,
                       lighting_dir)
@@ -132,10 +170,10 @@ def main():
     else:
         print("Skipping: lighting")
 
-    # Final: Assemble presentation
+    # Final: Assemble presentation (title slide shows the ORIGINAL input image)
     if "presentation" not in args.skip:
         run_presentation(args.image, args.name, args.desc,
-                         angles_dir, expressions_dir, outfits_dir, lighting_dir)
+                         angles_dir, expressions_dir, outfits_dir, lighting_dir, poses_dir)
 
     elapsed = time.time() - start
     minutes = int(elapsed // 60)
