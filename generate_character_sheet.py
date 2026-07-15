@@ -71,11 +71,20 @@ def run_pass(image, pipeline, seed, concurrency, output_dir, get_pose=False, ext
     return subprocess.run(cmd, cwd=HERE, stdout=out, stderr=out).returncode == 0
 
 
-def is_white_bg(path, thresh=238):
-    """True if all four corners are (near-)white — used to reject scene drift."""
+def is_white_bg(path, min_border_white=0.40, thresh=238):
+    """True if most of the border ring is near-white — used to reject scene drift.
+
+    Uses the fraction of border pixels that are near-white rather than requiring
+    every corner to be white. A subject that fills the frame to an edge (e.g. a
+    close-up whose shoulders reach the bottom corners) still leaves most of the
+    border white and should pass; true scene-drift floods the whole border with
+    color/texture and drops the fraction toward zero. Calibrated: clean views
+    score 0.8–1.0, legitimate tight close-ups ~0.5, scene drift ~0.
+    """
     try:
         a = np.asarray(Image.open(path).convert("RGB"))
-        return all(min(a[y, x]) > thresh for y, x in [(0, 0), (0, -1), (-1, 0), (-1, -1)])
+        border = np.concatenate([a[0, :, :], a[-1, :, :], a[:, 0, :], a[:, -1, :]])
+        return float((border.min(axis=1) > thresh).mean()) >= min_border_white
     except Exception:
         return False
 
@@ -98,7 +107,10 @@ def run_combo_angles(prep_dir, out_dir, seed, concurrency, retries=3):
     for tier, az, el, dist, name in COMBO_VIEWS:
         ref = os.path.join(prep_dir, TIER_REF[tier])
         dest = os.path.join(out_dir, f"{name}.png")
-        last = None
+        # Fallback lives OUTSIDE tmp (which is wiped every attempt) so a drifted
+        # render survives to become the best-effort output if all retries fail.
+        best = os.path.join(out_dir, f"_best_{name}.png")
+        got_white = False
         for attempt in range(retries):
             s = seed + attempt * 1000
             tmp = os.path.join(out_dir, f"_tmp_{name}")
@@ -108,26 +120,25 @@ def run_combo_angles(prep_dir, out_dir, seed, concurrency, retries=3):
                      quiet=True)
             outs = glob.glob(os.path.join(tmp, "*.png"))
             if outs:
-                last = outs[0] + f".keep{attempt}"
-                shutil.copy(outs[0], last)
+                shutil.copy(outs[0], best)  # remember most recent render as fallback
                 if is_white_bg(outs[0]):
                     shutil.copy(outs[0], dest)
                     shutil.rmtree(tmp, ignore_errors=True)
                     print(f"    ✓ {name}")
-                    last = None
+                    got_white = True
                     break
             shutil.rmtree(tmp, ignore_errors=True)
             print(f"    … {name}: attempt {attempt+1} {'drifted (non-white)' if outs else 'failed'}, retrying")
-        else:
+        if not got_white:
             # Never got a clean white bg — keep the last render so the sheet is complete.
-            if last and os.path.exists(last):
-                shutil.copy(last, dest)
+            if os.path.exists(best):
+                shutil.copy(best, dest)
                 print(f"    ⚠ {name}: kept best-effort render (bg not fully white)")
             else:
                 print(f"    ✗ {name}: no render")
                 all_ok = False
-        for k in glob.glob(os.path.join(out_dir, "*.keep*")):
-            os.remove(k)
+        if os.path.exists(best):
+            os.remove(best)
     return all_ok
 
 
