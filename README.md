@@ -36,6 +36,52 @@ The extracted 2D character poses are then turned into fully rigged 3D assets for
 
 ![Multi-angle example output](examples/angles_4x4.jpg)
 
+### Combined-Angle Turnaround (crop for framing, LoRA for angle)
+
+The multi-angle LoRAs control camera **angle** reliably but are unreliable at
+**framing** (a "medium/closeup" often renders as full-body). Qwen Image Edit, by
+contrast, preserves the *input's* framing. The combined pipeline exploits both:
+control framing by feeding a **pre-cropped reference**, and control the camera
+with the LoRA. Gaze/hairstyle/white-background are locked with prompt text.
+
+**Base preparation** — render a clean standing pose, upscale, and crop the
+framing tiers so the crops stay sharp:
+
+```bash
+# 1. Normalize to a front standing pose at Qwen-native resolution (~1328px)
+python batch_multi_angle.py --image ref.png --cloud --pipeline standing_relaxed \
+    --megapixels 1.76 --output out/base_hires
+
+# 2. 2x AI-upscale (4x-UltraSharp) then crop full/medium/close, LANCZOS-down to 1024
+python prep_angle_references.py --image out/base_hires/standing_relaxed.png \
+    --output-dir out/base
+```
+
+`--megapixels` renders the qwen-edit pipelines at Qwen's native resolution
+instead of the Flux `FluxKontextImageScale` ~1 MP cap. `prep_angle_references.py`
+upscales large first and *downscales* the crops, avoiding the pixelization you
+get from upscaling a tight crop of a 1 MP render.
+
+**Turnaround render** — feed each tier's reference to the 2511 LoRA at the
+desired azimuth/elevation/distance:
+
+| Tier | Reference | Distance | Views |
+|------|-----------|----------|-------|
+| Full | `standing_relaxed.png` | 1.8 | front, back, side, 3/4 front |
+| Medium | `standing_relaxed_medium.png` | 1.0 | 3/4 back, 3/4 front (any elevation) |
+| Closeup | `standing_relaxed_close.png` | 0.6 | front, 3/4 |
+
+```bash
+python batch_multi_angle.py --image out/base/standing_relaxed_close.png --cloud \
+    --pipeline 2511 --azimuths 45 --elevations 30 --distances 0.6 --output out/angles_combo
+```
+
+Notes: white backgrounds are enforced via prompt + `flatten_to_white_bg`
+post-processing (the 2511 LoRA occasionally drifts to a scene — re-run that view
+with a different `--seed`). For prompt-only angles, prefer **describing** a
+subtle turn ("barely turned, both ears visible") over numeric degrees, which
+the model tends to over- or under-shoot.
+
 ### Skeleton Extraction (`--get-pose`)
 
 When `--get-pose` is enabled, each rendered image is automatically run through DWPose extraction inline — no separate pass needed. Outputs include the skeleton visualization and a JSON file with all keypoints (body, face, hands).
@@ -231,7 +277,13 @@ python batch_multi_angle.py --image photo.png --cloud --dry-run
 | `--azimuths` | all | Subset, e.g. `0,90,180,270` |
 | `--elevations` | all | Subset, e.g. `-30,0,30` |
 | `--distances` | all | Subset, e.g. `0.6,1.0` |
-| `--prompt-append` | `""` | Text appended to every prompt |
+| `--poses` | all | Subset for `poses_prompt`: names, or `base` for the 16 action poses |
+| `--expressions` | all | Subset for `expressions`: comma-separated names |
+| `--outfits` | all | Subset for `outfits`: comma-separated names |
+| `--angles` | all | Subset for `angles_prompt`: comma-separated angle names |
+| `--megapixels` | — | Render qwen-edit pipelines at this MP target (e.g. `1.76` = Qwen-native 1328²) instead of the Flux ~1 MP cap |
+| `--force` | off | Re-render even if the output file already exists |
+| `--prompt-append` | `""` | Text appended to every prompt (for `2511`, concatenated onto the camera-node conditioning as reinforcement) |
 | `--timeout` | `600` | Per-job timeout in seconds |
 | `--get-pose` | off | Run DWPose extraction on each render (saves skeleton + JSON to `poses/` subdir) |
 | `--dry-run` | off | Print prompts without rendering |

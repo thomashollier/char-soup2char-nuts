@@ -163,7 +163,7 @@ OUTFITS_PREFIX = (
 )
 
 POSES = {
-    "running":        "Change the pose to running at full speed. Left leg extended forward, right leg pushing off behind. Arms bent at elbows pumping in opposite rhythm to legs. Torso leaning forward, hair flowing back.",
+    "running":        "Change the pose to running at full speed. Left leg extended forward, right leg pushing off behind. Arms bent at elbows pumping in opposite rhythm to legs. Torso leaning forward.",
     "jumping_joy":    "Change the pose to jumping in the air with joy. Both feet off the ground, knees bent. Both arms raised high above the head, fingers spread wide. Head tilted up, back slightly arched.",
     "sitting_cross":  "Change the pose to sitting cross-legged. The character sits upright with legs folded and ankles crossed in front, back straight, hands resting gently on the knees, head level and facing forward with a calm expression. Full body visible and centered in the frame, camera at eye level, even studio lighting.",
     "waving":         "Change the pose to waving hello. Right arm raised high above the shoulder, hand open with fingers together, wrist tilted side to side. Left arm relaxed at the side. Weight on both feet, slight lean toward the viewer.",
@@ -174,7 +174,7 @@ POSES = {
     "pointing":       "Change the pose to pointing at something in the distance. Right arm fully extended forward, index finger pointing. Left hand on hip. Body turned slightly to the right, weight on the right foot, left foot angled out.",
     "hands_on_hips":  "Change the pose to standing confidently with both hands on hips. Elbows pushed out wide, fingers wrapped around the waist. Feet shoulder-width apart, chest out, chin raised slightly.",
     "kicking":        "Change the pose to kicking a ball. Right leg swung forward and up at hip height, toes pointed. Left leg planted firmly, slightly bent. Arms out to the sides for balance. Torso leaning back slightly.",
-    "jump_rope":      "Change the pose to jumping rope, viewed from a slight 3/4 angle. She is at the peak of her jump with both feet off the ground, one knee higher than the other. The rope passing beneath her feet. Body slightly turned, not perfectly symmetrical. Hair flying up, joyful expression.",
+    "jump_rope":      "Change the pose to jumping rope, viewed from a slight 3/4 angle. At the peak of the jump with both feet off the ground, one knee higher than the other. The rope passing beneath the feet. Body slightly turned, not perfectly symmetrical, joyful expression.",
     "talking":        "Change the pose to standing at a 3/4 angle, in confident conversation. One hand raised at chest height with palm up, making a calm deliberate gesture. Other hand relaxed at her side. Weight on one leg, posture upright and poised. Calm confident expression, slight smile, speaking with composure.",
     "leaning_wall":   "Change the pose to leaning against a wall. Right shoulder pressed against the wall, arms crossed over the chest. Right leg crossed over the left at the ankle. Head tilted slightly, looking forward with a relaxed expression.",
     "reading":        "Change the pose to sitting on an institutional mid-century light colored wood chair, reading a book, viewed from a slight 3/4 right angle. Legs crossed at the ankles, leaning back comfortably. Both hands holding an open book at chest height, head tilted down looking at the pages. Relaxed, absorbed expression.",
@@ -278,7 +278,9 @@ POSES = {
 }
 
 ANGLES_PROMPT = {}
-_GAZE_BRAID = "The character's eyes and gaze face the same direction the body is pointing. The braids drape in front of the shoulders, not behind."
+_GAZE_BRAID = "The character's eyes look straight ahead in the exact direction the face is pointing, with a calm neutral gaze — the eyes do not glance to the side, up, down, or toward the camera. Keep the exact same hairstyle as in the original image; do not loosen, let down, add, or otherwise change the hair."
+# Explicit medium-shot crop: bottom edge at mid-stomach, top edge just above the head.
+_MEDIUM_FRAME = "This is a medium shot: frame the character so the bottom edge of the image cuts across the middle of the stomach and the top edge sits just above the top of the head. Only the head, shoulders, chest, and upper stomach are visible; the lower body is out of frame."
 _DIRECTIONS = [
     ("front",       "000", "front-facing",                                          ""),
     ("front_right", "045", "from a 3/4 front-right angle",                          "Rotate the camera 45 degrees to the right."),
@@ -292,19 +294,43 @@ _DIRECTIONS = [
 for _name, _deg, _view, _rotate in _DIRECTIONS:
     _r = f"{_rotate} " if _rotate else ""
     ANGLES_PROMPT[f"{_name}_close"]  = f"{_r}Close-up shot showing head and shoulders {_view}. {_GAZE_BRAID}"
-    ANGLES_PROMPT[f"{_name}_medium"] = f"{_r}Move the camera much closer to the subject. The image should only contain the upper half of the body, from head to waist {_view}. The lower body is cut off by the bottom of the frame. {_GAZE_BRAID}"
+    ANGLES_PROMPT[f"{_name}_medium"] = f"{_r}Medium shot {_view}. {_MEDIUM_FRAME} {_GAZE_BRAID}"
     ANGLES_PROMPT[f"{_name}_wide"]   = f"{_r}Full body wide shot {_view}, showing the entire figure from head to toe. {_GAZE_BRAID}"
     # Elevated 30° versions (camera above looking down)
     _elev_cam = "The camera is higher up, at head height plus 3 feet, angled slightly downward. The horizon line is low in the frame. Do not roll or rotate the camera, keep it perfectly level left to right."
-    _neutral_gaze = "Keep the exact same neutral facial expression as the original image. The character looks straight ahead in the direction the body faces, not at the camera. The braids drape in front of the shoulders, not behind."
+    _neutral_gaze = "Keep the exact same neutral facial expression as the original image. The character's eyes look straight ahead in the exact direction the face is pointing, with a calm neutral gaze — the eyes do not glance to the side, up, down, or toward the camera. Keep the exact same hairstyle as in the original image; do not loosen, let down, add, or otherwise change the hair."
     ANGLES_PROMPT[f"{_name}_elev_close"]  = f"{_r}{_elev_cam} Close-up shot showing head and shoulders {_view}. {_neutral_gaze}"
-    ANGLES_PROMPT[f"{_name}_elev_medium"] = f"{_r}{_elev_cam} Move the camera much closer. The image should only contain the upper half of the body from head to waist {_view}. The lower body is cut off by the bottom of the frame. {_neutral_gaze}"
+    ANGLES_PROMPT[f"{_name}_elev_medium"] = f"{_r}{_elev_cam} Medium shot {_view}. {_MEDIUM_FRAME} {_neutral_gaze}"
     ANGLES_PROMPT[f"{_name}_elev_wide"]   = f"{_r}{_elev_cam} Full body wide shot {_view}, showing the entire figure from head to toe. {_neutral_gaze}"
     # Low angle 30° versions (camera below looking up)
     _low_cam = "The camera is lower, at knee height, angled slightly upward. The horizon line is high in the frame. Do not roll or rotate the camera, keep it perfectly level left to right."
     ANGLES_PROMPT[f"{_name}_low_close"]  = f"{_r}{_low_cam} Close-up shot showing head and shoulders {_view}. {_neutral_gaze}"
-    ANGLES_PROMPT[f"{_name}_low_medium"] = f"{_r}{_low_cam} Move the camera much closer. The image should only contain the upper half of the body from head to waist {_view}. The lower body is cut off by the bottom of the frame. {_neutral_gaze}"
+    ANGLES_PROMPT[f"{_name}_low_medium"] = f"{_r}{_low_cam} Medium shot {_view}. {_MEDIUM_FRAME} {_neutral_gaze}"
     ANGLES_PROMPT[f"{_name}_low_wide"]   = f"{_r}{_low_cam} Full body wide shot {_view}, showing the entire figure from head to toe. {_neutral_gaze}"
+
+# ── Extra hand-tuned angle prompts ──────────────────────────────────────────
+ANGLES_PROMPT["front_3q_right_medium"] = (
+    "Rotate the camera 45 degrees to the right so the character is seen from a 3/4 "
+    "front-right angle, the body turned about 45 degrees. " + _MEDIUM_FRAME + " " + _GAZE_BRAID
+)
+ANGLES_PROMPT["back_3q_left_medium"] = (
+    "Rotate the camera 135 degrees to the left so the character is seen from a 3/4 "
+    "back-left angle — mostly from behind, turned about 45 degrees toward the left, with "
+    "the back of the head and one shoulder toward the camera. " + _MEDIUM_FRAME + " " + _GAZE_BRAID
+)
+ANGLES_PROMPT["front_slight_close"] = (
+    "Close-up shot showing the head and chest. The whole character is rotated as one single "
+    "rigid unit — shoulders, chest, neck, and head all turned together by the same tiny "
+    "amount to one side, the gentlest possible rotation away from a dead-on front view. Her "
+    "shoulders and chest face the exact same direction as her head; the neck stays straight "
+    "and does NOT twist, so the head and body stay perfectly aligned, as if the entire "
+    "figure were turned together on a turntable. It is only barely off from front-on: both "
+    "ears remain visible, both eyes are clearly and almost equally seen, and the nose points "
+    "nearly straight at the camera, offset by only a whisper. This is NOT a 3/4 view and NOT "
+    "a profile. The eyes look straight ahead in the same direction the body and head face, "
+    "in line with the body — do not turn the head or eyes back toward the camera. A neutral "
+    "reference view. " + _GAZE_BRAID
+)
 
 # Shared clause forcing a clean, solid white background on every derived render.
 WHITE_BG = (
@@ -362,10 +388,10 @@ STANDING_RELAXED_PROMPT_NANOBANANA = (
     "one leg with the other knee slightly soft, hip cocked subtly. Head and gaze aligned "
     "with the body, looking slightly to the left, calm neutral expression. Replace the "
     "background with a plain solid medium grey, completely flat and even, no shadows, no "
-    "gradient, no scene elements. Preserve the character's distinctive pear-shaped "
-    "silhouette exactly — narrow shoulders, wider hips and midsection. Do not broaden, "
-    "square off, or straighten the shoulders. Keep the same outfit, hairstyle, hair color, "
-    "identity, facial features, and full body proportions."
+    "gradient, no scene elements. Preserve the character's exact body proportions and "
+    "silhouette from the original image; do not broaden, narrow, or otherwise reshape the "
+    "body. Keep the same outfit, hairstyle, hair color, identity, facial features, and full "
+    "body proportions."
 )
 
 NANOBANANA_SYSTEM_PROMPT = (
@@ -462,7 +488,7 @@ def build_workflow(
     lora_strength_lightning=1.0, lora_strength_angles=1.0,
     filename_prefix="multi_angle", pipeline="2511",
     pose_image_filename=None, get_pose=False,
-    qwen_version="2511", engine="qwen",
+    qwen_version="2511", engine="qwen", reinforce="", megapixels=None,
 ):
     """Dispatch to the appropriate pipeline workflow builder."""
     if engine == "nanobanana":
@@ -483,13 +509,14 @@ def build_workflow(
         wf = build_workflow_expressions(
             image_filename, prompt, seed, steps, guidance_scale,
             lora_strength_lightning, filename_prefix,
-            qwen_version=qwen_version,
+            qwen_version=qwen_version, megapixels=megapixels,
         )
     else:
         wf = build_workflow_2511(
             image_filename, azimuth, elevation, distance,
             seed, steps, guidance_scale,
             lora_strength_lightning, lora_strength_angles, filename_prefix,
+            reinforce=reinforce,
         )
 
     if get_pose:
@@ -503,13 +530,17 @@ def build_workflow_2511(
     image_filename, azimuth, elevation, distance,
     seed=42, steps=4, guidance_scale=1.0,
     lora_strength_lightning=1.0, lora_strength_angles=1.0,
-    filename_prefix="multi_angle",
+    filename_prefix="multi_angle", reinforce="",
 ):
     """
     Build a ComfyUI API-format workflow for 2511 pipeline.
     Uses QwenMultiangleCameraNode for camera control.
+
+    If `reinforce` is given, its text is encoded separately and concatenated onto
+    the camera node's positive conditioning (ConditioningConcat), letting a plain
+    text prompt reinforce framing/gaze on top of the LoRA's camera control.
     """
-    return {
+    wf = {
         # ── Load input image ──────────────────────────────────────
         "1": {
             "class_type": "LoadImage",
@@ -567,7 +598,9 @@ def build_workflow_2511(
             "class_type": "FluxKontextMultiReferenceLatentMethod",
             "inputs": {
                 "reference_latents_method": "index_timestep_zero",
-                "conditioning": ["4:103", 0],
+                # positive conditioning: camera-node prompt, optionally with
+                # reinforcement text concatenated on (see reinforce nodes below)
+                "conditioning": ["4:concat", 0] if reinforce else ["4:103", 0],
             },
         },
         "4:96": {
@@ -660,6 +693,28 @@ def build_workflow_2511(
             },
         },
     }
+
+    # Optional prompt reinforcement: encode the reinforce text and concatenate it
+    # onto the camera node's positive conditioning (node 4:97 reads 4:concat).
+    if reinforce:
+        wf["4:103r"] = {
+            "class_type": "TextEncodeQwenImageEditPlus",
+            "inputs": {
+                "prompt": reinforce,
+                "clip": ["4:93", 0],
+                "vae": ["4:95", 0],
+                "image1": ["4:106", 0],
+            },
+        }
+        wf["4:concat"] = {
+            "class_type": "ConditioningConcat",
+            "inputs": {
+                "conditioning_to": ["4:103", 0],
+                "conditioning_from": ["4:103r", 0],
+            },
+        }
+
+    return wf
 
 
 def build_workflow_2509(
@@ -856,14 +911,17 @@ def build_workflow_expressions(
     image_filename, prompt,
     seed=42, steps=4, guidance_scale=1.0,
     lora_strength_lightning=1.0, filename_prefix="expression",
-    qwen_version="2511",
+    qwen_version="2511", megapixels=None,
 ):
     """
     Build a ComfyUI API-format workflow for expression editing.
     Uses Qwen Image Edit base model + Lightning LoRA with a text prompt.
+
+    If `megapixels` is given, the input is scaled to that total-pixel target
+    (e.g. 1.76 for Qwen's native 1328x1328) instead of Flux Kontext's ~1 MP.
     """
     models = QWEN_EDIT_MODELS[qwen_version]
-    return {
+    wf = {
         # ── Load input image ──────────────────────────────────────
         "1": {
             "class_type": "LoadImage",
@@ -993,6 +1051,21 @@ def build_workflow_expressions(
             },
         },
     }
+
+    # Optionally render at a higher total-pixel target (e.g. Qwen-native ~1.76 MP
+    # = 1328x1328) by replacing the Flux ~1 MP scale on node "40".
+    if megapixels:
+        wf["40"] = {
+            "class_type": "ImageScaleToTotalPixels",
+            "inputs": {
+                "image": ["1", 0],
+                "upscale_method": "lanczos",
+                "megapixels": megapixels,
+                "resolution_steps": 64,
+            },
+        }
+
+    return wf
 
 
 def build_workflow_anypose(
@@ -1603,7 +1676,9 @@ async def _process_batch_ws(jobs, args, api_key, session):
                                     pose_image_filename=pose_cloud_name,
                                     get_pose=getattr(args, 'get_pose', False),
                                     qwen_version=args.qwen_version,
-                                    engine=args.engine)
+                                    engine=args.engine,
+                                    reinforce=args.prompt_append,
+                                    megapixels=args.megapixels)
                 pid = await cloud_submit(session, api_key, wf)
                 pid_to_job[pid] = (idx, fname, out, prompt)
                 pending.add(pid)
@@ -1779,6 +1854,9 @@ def main():
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--width", type=int, default=1024)
     p.add_argument("--height", type=int, default=1024)
+    p.add_argument("--megapixels", type=float, default=None,
+                   help="Render target in megapixels for the qwen-edit pipelines "
+                        "(e.g. 1.76 for Qwen-native 1328x1328); default uses Flux ~1 MP")
     p.add_argument("--lora-angles", type=float, default=1.0)
     p.add_argument("--lora-lightning", type=float, default=1.0)
     p.add_argument("--timeout", type=int, default=600)
@@ -1789,6 +1867,8 @@ def main():
                    help="Subset for --pipeline expressions: comma-separated expression names")
     p.add_argument("--outfits", default=None,
                    help="Subset for --pipeline outfits: comma-separated outfit names")
+    p.add_argument("--angles", default=None,
+                   help="Subset for --pipeline angles_prompt: comma-separated angle names")
     p.add_argument("--azimuths", default=None, help="Subset, e.g. 0,90,180,270")
     p.add_argument("--elevations", default=None, help="Subset, e.g. -30,0,30,60")
     p.add_argument("--distances", default=None, help="Subset, e.g. 0.6,1.0,1.8")
@@ -1841,11 +1921,17 @@ def main():
     suffix = f" {args.prompt_append}" if args.prompt_append else ""
 
     if args.pipeline == "angles_prompt":
+        angle_items = list(ANGLES_PROMPT.items())
+        if args.angles:
+            wanted = [x.strip() for x in args.angles.split(",")]
+            for w in wanted:
+                assert w in ANGLES_PROMPT, f"Bad angle name '{w}'. Valid: {list(ANGLES_PROMPT)}"
+            angle_items = [(w, ANGLES_PROMPT[w]) for w in wanted]
         jobs = [
             (None, None, None,
              ANGLES_PROMPT_PREFIX + desc + suffix,
              f"angle_{name}.png")
-            for name, desc in ANGLES_PROMPT.items()
+            for name, desc in angle_items
         ]
     elif args.pipeline == "poses_prompt":
         pose_items = list(POSES.items())
