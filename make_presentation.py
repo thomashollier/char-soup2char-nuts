@@ -156,22 +156,23 @@ def make_angles_slide(prs, images, title="Multi-Angle Views"):
              "Camera orbit variations from a single reference image",
              font_size=14, color=SUBTLE_COLOR)
 
-    # Grid: 4 columns x 2 rows
+    # Grid: 4 columns x 2 rows — same row geometry as the pose/expression
+    # grids and the Outfits/Lighting page (0.6" gap between rows).
     picks = images[:8]
-    cols, rows = 4, 2
+    cols = 4
     margin_x = Inches(0.6)
-    margin_top = Inches(1.4)
-    spacing = Inches(0.15)
-    avail_w = int(SLIDE_WIDTH - margin_x * 2 - spacing * (cols - 1))
-    avail_h = int(SLIDE_HEIGHT - margin_top - Inches(0.5) - spacing * (rows - 1))
+    spacing_x = Inches(0.15)
+    row_top = Inches(1.4)
+    row_h = int((SLIDE_HEIGHT - Inches(3.2)) / 2)
+    row2_top = int(row_top) + row_h + Inches(0.6)
+    avail_w = int(SLIDE_WIDTH - margin_x * 2 - spacing_x * (cols - 1))
     cell_w = avail_w // cols
-    cell_h = avail_h // rows
 
     for i, img_path in enumerate(picks):
         r, c = i // cols, i % cols
-        left = int(margin_x + c * (cell_w + spacing))
-        top = int(margin_top + r * (cell_h + spacing))
-        add_image_fitted(slide, img_path, left, top, cell_w, cell_h)
+        left = int(margin_x + c * (cell_w + spacing_x))
+        top = int(row_top) if r == 0 else int(row2_top)
+        add_image_fitted(slide, img_path, left, top, cell_w, row_h)
 
         # Small label under each image
         basename = os.path.splitext(os.path.basename(img_path))[0]
@@ -181,12 +182,16 @@ def make_angles_slide(prs, images, title="Multi-Angle Views"):
         label = label.replace("shot ", "").strip()
         if len(label) > 30:
             label = label[:30]
-        add_text(slide, left, top + cell_h - Inches(0.05), cell_w, Inches(0.35),
-                 label, font_size=9, color=SUBTLE_COLOR, alignment=PP_ALIGN.CENTER)
+        add_text(slide, left, top + row_h, cell_w, Inches(0.3),
+                 label, font_size=10, color=SUBTLE_COLOR, alignment=PP_ALIGN.CENTER)
 
 
-def make_detail_slide(prs, images, skeletons, title="Poses & Skeleton Analysis"):
-    """Page 3: Mix of renders and skeletons in a 3x2 layout."""
+def make_poses_grid_slide(prs, poses, title, subtitle="Body pose variations driven by prompt editing"):
+    """A page of text-prompted poses in a 4x2 grid (up to 8).
+
+    Row geometry mirrors make_outfits_lighting_slide exactly, so the gap between
+    the two rows matches the Outfits/Lighting page even without a sub-heading.
+    """
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     set_slide_bg(slide, BG_COLOR)
 
@@ -195,114 +200,69 @@ def make_detail_slide(prs, images, skeletons, title="Poses & Skeleton Analysis")
              title, font_size=28, color=TEXT_COLOR, bold=True)
 
     add_text(slide, Inches(0.6), Inches(0.85), Inches(12), Inches(0.4),
-             "Rendered views paired with DWPose skeleton extraction",
-             font_size=14, color=SUBTLE_COLOR)
+             subtitle, font_size=14, color=SUBTLE_COLOR)
 
-    # 3 columns x 2 rows: top row = renders, bottom row = matching skeletons
-    picks = images[:3]
-    cols = 3
-    margin_x = Inches(0.8)
-    margin_top = Inches(1.4)
-    spacing_x = Inches(0.3)
-    spacing_y = Inches(0.2)
+    picks = poses[:8]
+    cols = 4
+    margin_x = Inches(0.6)
+    spacing_x = Inches(0.15)
+
+    # ── Row geometry copied from make_outfits_lighting_slide ──────────────
+    # so the inter-row spacing (0.6") is identical, minus the sub-headings.
+    row_top = Inches(1.4)
+    row_h = int((SLIDE_HEIGHT - Inches(3.2)) / 2)
+    row2_top = int(row_top) + row_h + Inches(0.6)
+
     avail_w = int(SLIDE_WIDTH - margin_x * 2 - spacing_x * (cols - 1))
     cell_w = avail_w // cols
-    row_h = int((SLIDE_HEIGHT - margin_top - Inches(0.4) - spacing_y) / 2)
 
     for i, img_path in enumerate(picks):
-        c = i
+        r, c = i // cols, i % cols
         left = int(margin_x + c * (cell_w + spacing_x))
-
-        # Top row: render
-        add_image_fitted(slide, img_path, left, int(margin_top), cell_w, row_h)
-
-        # Bottom row: matching skeleton
-        basename = os.path.splitext(os.path.basename(img_path))[0]
-        skel_path = None
-        for s in skeletons:
-            if basename in os.path.basename(s):
-                skel_path = s
-                break
-
-        if skel_path and os.path.exists(skel_path):
-            add_image_fitted(slide, skel_path, left,
-                           int(margin_top + row_h + spacing_y), cell_w, row_h)
-
-        # Label
-        parts = basename.split("_")
-        label = " ".join(p for p in parts if not p.startswith("az") and not p.startswith("el") and not p.startswith("d"))
-        label = label.replace("shot ", "").strip()
-        add_text(slide, left, int(margin_top) - Inches(0.25), cell_w, Inches(0.25),
-                 label, font_size=10, color=ACCENT_COLOR, alignment=PP_ALIGN.CENTER)
-
-
-def make_expressions_slide(prs, images):
-    """Expressions grid — 4x2."""
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    set_slide_bg(slide, BG_COLOR)
-
-    add_text(slide, Inches(0.6), Inches(0.3), Inches(12), Inches(0.6),
-             "Expressions", font_size=28, color=TEXT_COLOR, bold=True)
-
-    add_text(slide, Inches(0.6), Inches(0.85), Inches(12), Inches(0.4),
-             "Facial expression variations driven by prompt editing",
-             font_size=14, color=SUBTLE_COLOR)
-
-    picks = images[:8]
-    cols, rows = 4, 2
-    margin_x = Inches(0.6)
-    margin_top = Inches(1.3)
-    spacing = Inches(0.12)
-    avail_w = int(SLIDE_WIDTH - margin_x * 2 - spacing * (cols - 1))
-    avail_h = int(SLIDE_HEIGHT - margin_top - Inches(0.3) - spacing * (rows - 1))
-    cell_w = avail_w // cols
-    cell_h = avail_h // rows
-
-    for i, img_path in enumerate(picks):
-        r, c = i // cols, i % cols
-        left = int(margin_x + c * (cell_w + spacing))
-        top = int(margin_top + r * (cell_h + spacing))
-        add_image_fitted(slide, img_path, left, top, cell_w, cell_h)
-
-        # Label from filename
-        basename = os.path.splitext(os.path.basename(img_path))[0]
-        label = basename.replace("expr_", "").replace("_", " ").title()
-        add_text(slide, left, top + cell_h - Inches(0.02), cell_w, Inches(0.3),
-                 label, font_size=9, color=SUBTLE_COLOR, alignment=PP_ALIGN.CENTER)
-
-
-def make_poses_slide(prs, images):
-    """Prompt-driven body pose variations — 4x2 grid."""
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    set_slide_bg(slide, BG_COLOR)
-
-    add_text(slide, Inches(0.6), Inches(0.3), Inches(12), Inches(0.6),
-             "Poses", font_size=28, color=TEXT_COLOR, bold=True)
-
-    add_text(slide, Inches(0.6), Inches(0.85), Inches(12), Inches(0.4),
-             "Body pose variations driven by prompt editing",
-             font_size=14, color=SUBTLE_COLOR)
-
-    picks = images[:8]
-    cols, rows = 4, 2
-    margin_x = Inches(0.6)
-    margin_top = Inches(1.3)
-    spacing = Inches(0.12)
-    avail_w = int(SLIDE_WIDTH - margin_x * 2 - spacing * (cols - 1))
-    avail_h = int(SLIDE_HEIGHT - margin_top - Inches(0.3) - spacing * (rows - 1))
-    cell_w = avail_w // cols
-    cell_h = avail_h // rows
-
-    for i, img_path in enumerate(picks):
-        r, c = i // cols, i % cols
-        left = int(margin_x + c * (cell_w + spacing))
-        top = int(margin_top + r * (cell_h + spacing))
-        add_image_fitted(slide, img_path, left, top, cell_w, cell_h)
-
+        top = int(row_top) if r == 0 else int(row2_top)
+        add_image_fitted(slide, img_path, left, top, cell_w, row_h)
         basename = os.path.splitext(os.path.basename(img_path))[0]
         label = basename.replace("pose_", "").replace("_", " ").title()
-        add_text(slide, left, top + cell_h - Inches(0.02), cell_w, Inches(0.3),
-                 label, font_size=9, color=SUBTLE_COLOR, alignment=PP_ALIGN.CENTER)
+        add_text(slide, left, top + row_h, cell_w, Inches(0.3),
+                 label, font_size=10, color=SUBTLE_COLOR, alignment=PP_ALIGN.CENTER)
+
+
+def make_expressions_slide(prs, images, title="Expressions",
+                           subtitle="Facial expression variations driven by prompt editing"):
+    """A page of expressions in a 4x2 grid (up to 8).
+
+    Uses the same row geometry as make_poses_grid_slide / the Outfits/Lighting
+    page (0.6" gap between rows) for a consistent look across the deck.
+    """
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    set_slide_bg(slide, BG_COLOR)
+
+    add_text(slide, Inches(0.6), Inches(0.3), Inches(12), Inches(0.6),
+             title, font_size=28, color=TEXT_COLOR, bold=True)
+
+    add_text(slide, Inches(0.6), Inches(0.85), Inches(12), Inches(0.4),
+             subtitle, font_size=14, color=SUBTLE_COLOR)
+
+    picks = images[:8]
+    cols = 4
+    margin_x = Inches(0.6)
+    spacing_x = Inches(0.15)
+    row_top = Inches(1.4)
+    row_h = int((SLIDE_HEIGHT - Inches(3.2)) / 2)
+    row2_top = int(row_top) + row_h + Inches(0.6)
+    avail_w = int(SLIDE_WIDTH - margin_x * 2 - spacing_x * (cols - 1))
+    cell_w = avail_w // cols
+
+    for i, img_path in enumerate(picks):
+        r, c = i // cols, i % cols
+        left = int(margin_x + c * (cell_w + spacing_x))
+        top = int(row_top) if r == 0 else int(row2_top)
+        add_image_fitted(slide, img_path, left, top, cell_w, row_h)
+
+        basename = os.path.splitext(os.path.basename(img_path))[0]
+        label = basename.replace("expr_", "").replace("_", " ").title()
+        add_text(slide, left, top + row_h, cell_w, Inches(0.3),
+                 label, font_size=10, color=SUBTLE_COLOR, alignment=PP_ALIGN.CENTER)
 
 
 def make_outfits_lighting_slide(prs, outfits, lighting):
@@ -392,18 +352,34 @@ def generate_presentation(ref_image, char_name, char_desc, output_dir, output_fi
     # Page 2: Angle grid
     make_angles_slide(prs, slide2_picks)
 
-    # Page 3: Renders + skeletons
-    make_detail_slide(prs, slide3_picks, skeleton_images)
-
-    # Page 4: Poses
+    # Discover text-prompted pose images (used on the detail slide + poses grid)
     base_dir = os.path.dirname(os.path.abspath(output_dir))
     pose_search = [poses_dir] if poses_dir else glob.glob(os.path.join(base_dir, "*poses_prompt*"))
     pose_images = []
     for d in pose_search:
         if d and os.path.isdir(d):
             pose_images.extend(sorted(glob.glob(os.path.join(d, "pose_*.png"))))
+
+    # Order poses generic first (page 1), specific/action second (page 2).
+    POSE_ORDER = [
+        # page 1 — generic, versatile standing poses
+        "hands_on_hips", "thinking", "talking", "waving", "pointing", "leaning_wall", "shy_stance", "walking",
+        # page 2 — specific / dynamic action poses
+        "running", "jumping_joy", "dancing", "kicking", "jump_rope", "crouching", "sitting_cross", "reading",
+    ]
+    def _pose_key(path):
+        name = os.path.splitext(os.path.basename(path))[0].replace("pose_", "")
+        return POSE_ORDER.index(name) if name in POSE_ORDER else len(POSE_ORDER)
+    pose_images = sorted(pose_images, key=_pose_key)
+
+    # Pages 3 & 4: all text-prompted poses split across two 4x2 grids (8 + 8).
+    # Camera views are already on the angle grid (page 2), so they're not repeated here.
     if pose_images:
-        make_poses_slide(prs, pose_images)
+        make_poses_grid_slide(prs, pose_images[:8], "Poses 1",
+                              subtitle="Body pose variations driven by prompt editing (1 of 2)")
+        if pose_images[8:]:
+            make_poses_grid_slide(prs, pose_images[8:16], "Poses 2",
+                                  subtitle="Body pose variations driven by prompt editing (2 of 2)")
 
     # Page 5: Expressions
     expr_search = [expressions_dir] if expressions_dir else glob.glob(os.path.join(base_dir, "*expressions*"))
@@ -411,8 +387,24 @@ def generate_presentation(ref_image, char_name, char_desc, output_dir, output_fi
     for d in expr_search:
         if d and os.path.isdir(d):
             expr_images.extend(sorted(glob.glob(os.path.join(d, "expr_*.png"))))
+    # Order emotions neutral/positive first (page 1), negative second (page 2).
+    EXPRESSION_ORDER = [
+        # page 1 — neutral / positive
+        "neutral", "happy", "laughing", "smirk", "flirty", "determined", "sleepy", "surprised",
+        # page 2 — negative
+        "sad", "crying", "angry", "disgusted", "fearful", "contempt", "embarrassed", "confused",
+    ]
+    def _expr_key(path):
+        name = os.path.splitext(os.path.basename(path))[0].replace("expr_", "")
+        return EXPRESSION_ORDER.index(name) if name in EXPRESSION_ORDER else len(EXPRESSION_ORDER)
+    expr_images = sorted(expr_images, key=_expr_key)
+
     if expr_images:
-        make_expressions_slide(prs, expr_images)
+        make_expressions_slide(prs, expr_images[:8], "Expressions 1",
+                               subtitle="Facial expression variations driven by prompt editing (1 of 2)")
+        if expr_images[8:]:
+            make_expressions_slide(prs, expr_images[8:16], "Expressions 2",
+                                   subtitle="Facial expression variations driven by prompt editing (2 of 2)")
 
     # Page 5: Outfits & Lighting
     outfit_search = [outfits_dir] if outfits_dir else glob.glob(os.path.join(base_dir, "*outfits*"))
