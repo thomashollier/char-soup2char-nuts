@@ -130,6 +130,23 @@ EXPRESSIONS = {
     "sleepy":        "Change to a drowsy, sleepy expression with half-lidded eyes. Lower the upper eyelids so each eye is open only about halfway, giving a relaxed droopy sleepy look, but keep the eyes clearly open with the irises and pupils plainly visible. Both eyes are lowered by the exact same amount, evenly and symmetrically — do not fully close the eyes and do not wink; the left and right eye look identical. Do NOT add any blindfold, mask, cloth, or band over the eyes; her eyes are bare and simply half-open. Keep the eyebrows relaxed. Add a slight, gentle closed-mouth smile with the lips together and the corners of the mouth softly turned up. Relaxed jaw, serene expression.",
 }
 
+# Which expressions meet the viewer's gaze. The relatable / engaging emotions read
+# much stronger with direct eye contact; the introspective ones (grief, fear,
+# disgust, shame, drowsiness) stay looking off-camera. ~60% of the 16 look at us.
+LOOK_AT_VIEWER = {
+    "neutral", "happy", "laughing", "smirk", "surprised",
+    "confused", "determined", "flirty", "contempt", "angry",
+}
+
+# Turn ONLY the eyes to the lens while preserving the 3/4 head/body angle, so the
+# character makes eye contact without squaring up to face the camera.
+LOOK_AT_VIEWER_CLAUSE = (
+    " Keep the head and shoulders in the three-quarter angle described above, but the "
+    "character's eyes look straight into the camera lens — pupils and irises aimed directly "
+    "at the viewer for clear, unmistakable eye contact. Do not rotate the head to face "
+    "straight on, and do not let the gaze drift up, down, or off to the side."
+)
+
 LIGHTING = {
     "rim_light":     "Change the lighting so a bright light source is directly behind the figure, creating a glowing outline around the hair and shoulders. The front of the face is darker with only ambient fill light.",
     "side_light":    "Change the lighting to strong directional side lighting from the left, casting deep shadows on the right side of the face and body.",
@@ -2102,7 +2119,8 @@ def main():
             expr_items = [(w, EXPRESSIONS[w]) for w in wanted]
         jobs = [
             (None, None, None,
-             EXPRESSION_PREFIX + desc + suffix,
+             EXPRESSION_PREFIX + desc
+             + (LOOK_AT_VIEWER_CLAUSE if name in LOOK_AT_VIEWER else "") + suffix,
              f"expr_{name}.png")
             for name, desc in expr_items
         ]
