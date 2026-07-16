@@ -54,8 +54,8 @@ UPSCALE_MODEL = "4x-UltraSharp.pth"   # confirmed available on Comfy Cloud
 # Crop factors, as a fraction of detected figure height measured from the top of
 # the head. Tuned for a stylized (large-head) character; adjust per style.
 TIERS = {
-    "medium": 0.47,   # bottom edge ~mid-stomach
-    "close":  0.40,   # bottom edge ~just below the bust
+    "medium": 0.517,  # bottom edge ~mid-stomach (10% wider framing than 0.47)
+    "close":  0.36,   # bottom edge ~just below the bust (10% closer than 0.40)
 }
 
 
