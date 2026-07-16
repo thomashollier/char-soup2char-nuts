@@ -3,322 +3,210 @@
 
 A character sheet is the foundational document in any visual production pipeline. In animation, games, comics, and AI-driven content, it defines how a character looks from every angle, in every pose, and with every expression — the single source of truth that keeps a character consistent across hundreds of shots, scenes, or generated images.
 
-This tool allows artists to iterate and experiment with their character designs in a more streamlined manner — generating up to 96 camera angles, 16 body poses, 16 facial expressions, lighting and outfit variations, and full skeleton extraction from a single reference image. The results still depend on artistic intent; careful prompting, thoughtful angle selection, and curation of the output are what make the difference.
+This tool turns **one reference image into a complete, unattended character sheet** — an 8-view turnaround, 16 body poses, 16 facial expressions, plus outfit and lighting variations — assembled into a PowerPoint deck. The results still depend on artistic intent; careful prompting, thoughtful angle selection, and curation are what make the difference.
 
-The output is assembled into a PowerPoint presentation template.
-
-Built on [Qwen Image Edit](https://huggingface.co/collections/Qwen/qwen-image-edit-682e380fc18bf79d426663a2) models running locally or on [cloud.comfy.org](https://cloud.comfy.org) (requires API access token), with inline [DWPose](https://github.com/Fannovel16/comfyui_controlnet_aux) skeleton extraction for downstream 3D and animation workflows.
-
-The extracted 2D character poses are then turned into fully rigged 3D assets for animation in standard DCC tools — see [3D Rig Generation](#3d-rig-generation) for the full image-to-rigged-mesh pipeline.
+Runs on [cloud.comfy.org](https://cloud.comfy.org) (requires an API access token), combining [FLUX.1 Kontext](https://blackforestlabs.ai/) for clean source renders with [Qwen Image Edit](https://huggingface.co/collections/Qwen/qwen-image-edit-682e380fc18bf79d426663a2) for the variations.
 
 ### Original
 
 ![Original character reference](examples/chararcter_ref.png)
 
-## Supported Pipelines
+---
 
-| Pipeline | LoRAs | Variations | Method |
-|----------|-------|-----------|--------|
-| **2511** (default) | [fal Multi-Angles](https://huggingface.co/fal/Qwen-Image-Edit-2511-Multiple-Angles-LoRA) | 96 (8 az x 4 el x 3 dist) | `QwenMultiangleCameraNode` |
-| **2509** | [dx8152 Multi-Angles](https://huggingface.co/dx8152/Qwen-Edit-2509-Multiple-angles) | 72 (8 az x 3 el x 3 dist) | Bilingual text prompts |
-| **poses_prompt** | Qwen-Image-Edit-2511 + Lightning | 16 poses | Prompt-driven body pose variations |
-| **expressions** | Qwen-Image-Edit-2511 + Lightning | 16 emotions | Prompt-driven facial expression editing |
-| **lighting** | Qwen-Image-Edit-2511 + Lightning | 4 variations | Prompt-driven lighting changes |
-| **outfits** | Qwen-Image-Edit-2511 + Lightning | 4 variations | Prompt-driven outfit changes |
-| **anypose** | [lilylilith/AnyPose](https://huggingface.co/lilylilith/AnyPose) | Per pose image | Pose transfer from reference images |
-| **`--get-pose`** | [DWPose](https://github.com/Fannovel16/comfyui_controlnet_aux) | Per render | Inline skeleton extraction (body, face, hands) — combines with any pipeline above |
+## The Default Character Sheet
 
-### Multi-Angle Grid (2511 / 2509)
-
-- **Azimuths** (8): 0, 45, 90, 135, 180, 225, 270, 315 degrees
-- **Elevations** (4 for 2511, 3 for 2509): -30, 0, 30, 60 degrees
-- **Distances** (3): 0.6 (close-up), 1.0 (medium), 1.8 (wide)
-
-![Multi-angle example output](examples/angles_4x4.jpg)
-
-### Combined-Angle Turnaround (crop for framing, LoRA for angle)
-
-The multi-angle LoRAs control camera **angle** reliably but are unreliable at
-**framing** (a "medium/closeup" often renders as full-body). Qwen Image Edit, by
-contrast, preserves the *input's* framing. The combined pipeline exploits both:
-control framing by feeding a **pre-cropped reference**, and control the camera
-with the LoRA. Gaze/hairstyle/white-background are locked with prompt text.
-
-**Base preparation** — render a clean standing pose, upscale, and crop the
-framing tiers so the crops stay sharp:
+One command takes a single photo/render to a finished deck:
 
 ```bash
-# 1. Normalize to a front standing pose at Qwen-native resolution (~1328px)
-python batch_multi_angle.py --image ref.png --cloud --pipeline standing_relaxed \
-    --megapixels 1.76 --output out/base_hires
-
-# 2. 2x AI-upscale (4x-UltraSharp) then crop full/medium/close, LANCZOS-down to 1024
-python prep_angle_references.py --image out/base_hires/standing_relaxed.png \
-    --output-dir out/base
+python generate_character_sheet.py \
+  --image photo.png --name "Nora" \
+  --desc "A curious adventurer"
 ```
 
-`--megapixels` renders the qwen-edit pipelines at Qwen's native resolution
-instead of the Flux `FluxKontextImageScale` ~1 MP cap. `prep_angle_references.py`
-upscales large first and *downscales* the crops, avoiding the pixelization you
-get from upscaling a tight crop of a 1 MP render.
+It runs unattended (~20 min) and writes everything to `charsheet_nora/` (override with `--output`):
 
-**Turnaround render** — feed each tier's reference to the 2511 LoRA at the
-desired azimuth/elevation/distance:
+```
+charsheet_nora/
+  base/                 # clean neutral standing reference (+ tiered crops)
+  hero/                 # clean matte re-render of the original pose
+  angles_combo/         # 8-view turnaround
+  poses_prompt/         # 16 body poses
+  expressions/          # 16 facial expressions
+  outfits/              # 4 outfit variations
+  lighting/             # 4 lighting variations
+  nora_character_sheet.pptx
+```
 
-| Tier | Reference | Distance | Views |
-|------|-----------|----------|-------|
-| Full | `standing_relaxed.png` | 1.8 | front, back, side, 3/4 front |
-| Medium | `standing_relaxed_medium.png` | 1.0 | 3/4 back, 3/4 front (any elevation) |
-| Closeup | `standing_relaxed_close.png` | 0.6 | front, 3/4 |
+Skip any pass you don't need:
 
 ```bash
-python batch_multi_angle.py --image out/base/standing_relaxed_close.png --cloud \
-    --pipeline 2511 --azimuths 45 --elevations 30 --distances 0.6 --output out/angles_combo
+python generate_character_sheet.py --image photo.png --name "Nora" \
+    --skip outfits lighting
 ```
 
-Notes: white backgrounds are enforced via prompt + `flatten_to_white_bg`
-post-processing (the 2511 LoRA occasionally drifts to a scene — re-run that view
-with a different `--seed`). For prompt-only angles, prefer **describing** a
-subtle turn ("barely turned, both ears visible") over numeric degrees, which
-the model tends to over- or under-shoot.
+### How it works
 
-### Skeleton Extraction (`--get-pose`)
-
-When `--get-pose` is enabled, each rendered image is automatically run through DWPose extraction inline — no separate pass needed. Outputs include the skeleton visualization and a JSON file with all keypoints (body, face, hands).
-
-![Skeleton extraction example](examples/skeletons_4x4.jpg)
-
-Skeleton and JSON files are saved to a `poses/` subdirectory:
+The pipeline's key move is to **launder the one input through FLUX.1 Kontext into two clean, matte source renders**, and derive every Qwen variation from those:
 
 ```
-output_dir/
-  az000_el+00_d1.0_front_view_eyelevel_shot_medium_shot.png
-  poses/
-    az000_el+00_d1.0_front_view_eyelevel_shot_medium_shot_skeleton.png
-    az000_el+00_d1.0_front_view_eyelevel_shot_medium_shot_pose.json
+ORIGINAL (photo / render, possibly glossy)
+   │
+   ├─ Kontext ─► NEUTRAL base ──► Qwen ─► angles · poses · expressions
+   │             (standing pose, tiered crops)
+   │
+   └─ Kontext ─► HERO pose ─────► Qwen ─► outfits · lighting
+                 (original pose, keeps held props)
+                                     │
+   ORIGINAL ─────────────────────────┴─► title slide
+                                     ▼
+                          make_presentation.py ─► .pptx
 ```
 
-The JSON contains OpenPose-format keypoints (18 body, 68 face, 21 per hand) which can be used for 3D triangulation, pose-driven generation, or ControlNet conditioning.
+Why the two-Kontext step exists: the Qwen edit models paint muddy grey-olive blotches over a glossy reference's **specular highlights** whenever they repose it. FLUX.1 Kontext (a different architecture) re-renders clean matte skin instead, so once the base/hero are clean, every downstream Qwen pass inherits clean skin. The **neutral base** feeds the turnaround/poses/expressions; the **hero** keeps the character's original pose and held props (a weapon, a wand, a toy) for the outfit/lighting slides. See [The Weeds](#the-weeds--models-tests-and-hard-won-lessons) for how we got here.
 
-### Prompt Poses
+### The passes
 
-Generates 16 body pose variations using text prompts only (no pose reference images needed). Each prompt describes specific limb positions, body angles, and activities.
+| Pass | Source | Output |
+|------|--------|--------|
+| **base** (Kontext) | original | neutral front standing pose, upscaled + cropped into full/medium/close framing tiers |
+| **hero** (Kontext) | original | matte re-render of the original pose on white; keeps held items |
+| **angles** (Qwen 2511 + Multi-Angle LoRA) | base tiers | 8-view turnaround (4 full, 2 medium, 2 close) |
+| **poses** (Qwen) | base | 16 prompt-driven body poses |
+| **expressions** (Qwen) | base | 16 facial expressions |
+| **outfits** (Qwen) | hero | 4 outfit variations |
+| **lighting** (Qwen) | hero | 4 lighting variations |
+| **presentation** | all | 16:9 PowerPoint deck |
 
-![Prompt poses example output](examples/poses_prompt_4x4.jpg)
-
-### Expressions
-
-Generates 16 facial expression variations from a single image using Qwen Image Edit 2511 with prompt-driven editing. Expressions include body language cues that carry the emotion. Included expressions: neutral, happy, laughing, smirk, sad, crying, angry, disgusted, surprised, fearful, confused, determined, flirty, contempt, embarrassed, sleepy.
-
-![Expressions example output](examples/expressions_4x4.jpg)
-
-### Lighting
-
-Renders the character under different lighting conditions while preserving identity and pose.
-
-![Lighting example output](examples/lighting_1x4.jpg)
-
-### Outfits
-
-Renders the character in different outfits while preserving identity and pose.
-
-![Outfits example output](examples/outfits_1x4.jpg)
-
-### AnyPose
-
-Transfers poses from reference images (OpenPose skeletons, photos, etc.) onto your subject using the [lilylilith/AnyPose](https://huggingface.co/lilylilith/AnyPose) LoRA. Pose images are automatically padded to square and background-matched to the reference image before upload.
-
-![AnyPose example output](examples/poses_4x4.jpg)
-
-### Customizing Lighting & Outfit Prompts
-
-The `lighting` and `outfits` pipelines ship with default prompts designed for the example character (a young girl in a peace sign t-shirt). **You should customize these prompts for your own character.** A soldier, a robot, or a fantasy elf would each need different outfit and lighting descriptions.
-
-Edit the `LIGHTING` and `OUTFITS` dictionaries in `batch_multi_angle.py`:
-
-```python
-LIGHTING = {
-    "rim_light":     "Change the lighting so a bright light source is ...",
-    "side_light":    "Change the lighting to strong directional side lighting ...",
-    "golden_hour":   "Change the lighting to warm golden hour sunlight ...",
-    "moonlight":     "Change the lighting to cool blue moonlight ...",
-}
-
-OUTFITS = {
-    "formal":        "Change the outfit to ...",
-    "athletic":      "Change the outfit to ...",
-    "winter":        "Change the outfit to ...",
-    "work":          "Change the outfit to ...",
-}
-```
-
-Add or remove entries as needed — the script will automatically generate one image per entry. Use `--dry-run` to preview all prompts before rendering.
-
-## Presentation Template
-
-Generate a PowerPoint presentation template to start from.
-
-```bash
-python make_presentation.py --image ref.png --name "Nora" \
-  --desc "A curious 10-year-old adventurer" \
-  --output-dir ./pose_full_output
-```
-
-Produces a 16:9 PPTX with:
-- **Title slide** — A-pose reference with character name and description
-- **Multi-angle views** — 8 selected camera angles
-- **Skeleton analysis** — Renders paired with DWPose extractions
-- **Poses** — 8 prompt-driven body pose variations (if available)
-- **Expressions** — 8 facial expression variations (if available)
-- **Outfits & Lighting** — Outfit and lighting variations side by side (if available)
-
-![Presentation template](examples/presentation_3x2.jpg)
-
-The script auto-discovers expression, outfit, lighting, and pose images from sibling output directories. You can also specify them explicitly with `--expressions-dir`, `--outfits-dir`, `--lighting-dir`, and `--poses-dir`.
-
-## Included Pose Images
-
-The `poses/` directory contains OpenPose skeleton images from [Pose Depot](https://github.com/pose-depot/pose-depot):
-
-- `poses/F/` — 61 female pose variations
-- `poses/M/` — 61 male pose variations
+The **8-view turnaround** uses the "crop for framing, LoRA for angle" trick: the multi-angle LoRA controls the *camera angle* reliably but is unreliable at *framing* (a "close-up" often renders full-body), while Qwen preserves the *input's* framing. So framing is set by feeding a pre-cropped reference (full / mid-stomach / head-and-chest) and the angle by the LoRA. Non-white drift auto-retries with a new seed.
 
 ## Setup
 
 ```bash
 pip install -r requirements.txt
-export COMFY_CLOUD_API_KEY="your-key-here"  # from https://cloud.comfy.org
+export COMFY_CLOUD_API_KEY="your-key-here"   # from https://cloud.comfy.org
 ```
 
-The required models and LoRAs must be available in your Comfy Cloud workspace.
+The required models/LoRAs must be available in your Comfy Cloud workspace: `flux1-dev-kontext`, `qwen_image_edit_2511`, the 2511 Lightning + Multi-Angle LoRAs, `4x-UltraSharp` (upscale), and the Qwen VAE / CLIP.
 
-## Quick Start
+## Customizing for your character
 
-Run everything — all angles, expressions, outfits, lighting, skeleton extraction, and presentation — with a single command:
+The `outfits` and `lighting` prompts ship with generic slots (`formal`, `casual`, `cold_weather`, `work`; `rim_light`, `side_light`, `golden_hour`, `moonlight`). **Customize them per character** — a soldier, a robot, and a fantasy elf each need different descriptions. Edit the `OUTFITS` and `LIGHTING` dicts in `batch_multi_angle.py`. Held items (a sword, a wand) are preserved automatically via the hero render.
+
+---
+
+## Individual pipelines
+
+Every pass can also be run on its own with `batch_multi_angle.py`. This is the toolbox the default sheet is built from.
 
 ```bash
-python generate_character_sheet.py --image photo.png --name "Nora" --desc "A curious adventurer"
-```
+# Clean Kontext source renders (used by the default sheet)
+python batch_multi_angle.py --image photo.png --cloud --pipeline kontext_base --steps 20
+python batch_multi_angle.py --image photo.png --cloud --pipeline kontext_hero --steps 20
 
-This produces a complete output directory with all passes and a PowerPoint template:
+# Combined-angle turnaround references: upscale + tiered crops from a base render
+python prep_angle_references.py --image base/standing_relaxed.png --output-dir base
 
-```
-charsheet_nora/
-  angles/                    # 96 multi-angle renders + poses/
-  expressions/               # 16 facial expression variations
-  outfits/                   # 4 outfit variations
-  lighting/                  # 4 lighting variations
-  angles/nora_character_sheet.pptx
-```
+# One turnaround view (crop = framing, 2511 LoRA = angle)
+python batch_multi_angle.py --image base/standing_relaxed_close.png --cloud \
+    --pipeline 2511 --azimuths 45 --elevations 30 --distances 0.6 --output angles_combo
 
-Skip specific passes if you don't need them:
-
-```bash
-python generate_character_sheet.py --image photo.png --name "Nora" --skip outfits lighting
-```
-
-## Individual Pipelines
-
-Each pass can also be run independently with `batch_multi_angle.py`:
-
-```bash
-# Multi-angle: 2511 pipeline (default, 96 poses)
-python batch_multi_angle.py --image photo.png --cloud
-
-# Multi-angle: 2509 pipeline (72 poses)
+# Raw multi-angle grids: 2511 (96 = 8az×4el×3dist) or 2509 (72 = 8az×3el×3dist)
+python batch_multi_angle.py --image photo.png --cloud --pipeline 2511
 python batch_multi_angle.py --image photo.png --cloud --pipeline 2509
 
-# AnyPose: transfer poses from a directory of pose images
-python batch_multi_angle.py --image photo.png --cloud --pipeline anypose --pose-dir ./poses/F
-
-# Prompt poses: generate 16 body pose variations
+# Prompt-driven variations
 python batch_multi_angle.py --image photo.png --cloud --pipeline poses_prompt
-
-# Expressions: generate 16 facial expression variations
 python batch_multi_angle.py --image photo.png --cloud --pipeline expressions
-
-# Lighting: render under different lighting conditions
+python batch_multi_angle.py --image photo.png --cloud --pipeline outfits
 python batch_multi_angle.py --image photo.png --cloud --pipeline lighting
 
-# Outfits: render in different outfits
-python batch_multi_angle.py --image photo.png --cloud --pipeline outfits
+# Pose transfer from reference skeletons/photos
+python batch_multi_angle.py --image photo.png --cloud --pipeline anypose --pose-dir ./poses/F
 
-# Different seed (output dir auto-named by pipeline + seed)
-python batch_multi_angle.py --image photo.png --cloud --seed 123
-
-# Append text to every prompt
-python batch_multi_angle.py --image photo.png --cloud --prompt-append "dramatic lighting"
-
-# Multi-angle with skeleton extraction
+# Inline DWPose skeleton extraction (body/face/hands) — combines with any pipeline
 python batch_multi_angle.py --image photo.png --cloud --get-pose
 
-# Render a subset of angles
-python batch_multi_angle.py --image photo.png --cloud --azimuths 0,90,180,270 --elevations 0
-
-# Preview all prompts without rendering
+# Preview every prompt without rendering
 python batch_multi_angle.py --image photo.png --cloud --dry-run
 ```
 
-## Options
+![Multi-angle example output](examples/angles_4x4.jpg)
+![Expressions example output](examples/expressions_4x4.jpg)
+
+### Key options
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--image` | (required) | Input image path |
+| `--pipeline` | `2511` | `kontext_base`, `kontext_hero`, `2511`, `2509`, `poses_prompt`, `expressions`, `lighting`, `outfits`, `anypose` |
 | `--cloud` | off | Use Comfy Cloud (otherwise targets local ComfyUI) |
-| `--pipeline` | `2511` | `2509`, `2511`, `anypose`, `poses_prompt`, `expressions`, `lighting`, or `outfits` |
-| `--pose-dir` | — | Directory of pose images (required for `anypose`) |
-| `--output` | auto | Output directory (default: `./multi_angle_output_{pipeline}_seed{seed}`) |
-| `--seed` | `42` | Random seed |
-| `--steps` | `4` | Inference steps (Lightning LoRA tuned for 4) |
-| `--guidance` | `1.0` | CFG scale |
+| `--seed` | `42` | Random seed (change to force a fresh render / dodge the cache) |
+| `--steps` | `4` | Inference steps — Qwen Lightning is tuned for 4; Kontext uses 20 |
 | `--concurrency` | `3` | Parallel cloud jobs |
-| `--lora-angles` | `1.0` | Angles LoRA strength |
-| `--lora-lightning` | `1.0` | Lightning LoRA strength |
-| `--azimuths` | all | Subset, e.g. `0,90,180,270` |
-| `--elevations` | all | Subset, e.g. `-30,0,30` |
-| `--distances` | all | Subset, e.g. `0.6,1.0` |
-| `--poses` | all | Subset for `poses_prompt`: names, or `base` for the 16 action poses |
-| `--expressions` | all | Subset for `expressions`: comma-separated names |
-| `--outfits` | all | Subset for `outfits`: comma-separated names |
-| `--angles` | all | Subset for `angles_prompt`: comma-separated angle names |
-| `--megapixels` | — | Render qwen-edit pipelines at this MP target (e.g. `1.76` = Qwen-native 1328²) instead of the Flux ~1 MP cap |
-| `--force` | off | Re-render even if the output file already exists |
-| `--prompt-append` | `""` | Text appended to every prompt (for `2511`, concatenated onto the camera-node conditioning as reinforcement) |
-| `--timeout` | `600` | Per-job timeout in seconds |
-| `--get-pose` | off | Run DWPose extraction on each render (saves skeleton + JSON to `poses/` subdir) |
+| `--azimuths` / `--elevations` / `--distances` | all | Angle-grid subsets, e.g. `--azimuths 0,90,180,270` |
+| `--poses` / `--expressions` / `--outfits` | all | Named subsets (`--poses base` = the 16 action poses) |
+| `--lightning-lora` | — | Override the Lightning LoRA filename (e.g. the 8-step variant) |
+| `--force` | off | Re-render even if the output exists |
+| `--prompt-append` | `""` | Text appended to every prompt |
+| `--get-pose` | off | DWPose skeleton + keypoint JSON per render |
 | `--dry-run` | off | Print prompts without rendering |
 
-## Output
+### Presentation deck
 
-Images are saved with descriptive filenames:
+`make_presentation.py` assembles a 16:9 PPTX (title → 8-view turnaround → poses → expressions → outfits & lighting). It auto-discovers sibling output dirs, or point it explicitly:
 
-```
-# Multi-angle
-az000_el+00_d1.0_front_view_eyelevel_shot_medium_shot.png
-az090_el-30_d0.6_right_side_view_lowangle_shot_closeup.png
-
-# AnyPose
-pose_2F_Hand_on_Hip_OpenPoseFull.png
-pose_15F_Flying_Superhero_OpenPoseFull_3.png
-
-# Expressions
-expr_happy.png
-expr_surprised.png
-
-# Lighting / Outfits
-light_rim_light.png
-outfit_work.png
+```bash
+python make_presentation.py --image photo.png --name "Nora" --desc "A curious adventurer" \
+  --output-dir angles_combo --poses-dir poses_prompt --expressions-dir expressions \
+  --outfits-dir outfits --lighting-dir lighting --output nora_character_sheet.pptx
 ```
 
-Existing files are automatically skipped, so you can safely re-run to fill in any gaps.
+![Presentation template](examples/presentation_3x2.jpg)
 
-## How It Works
+### Included pose images
 
-1. Uploads the input image to Comfy Cloud
-2. For AnyPose: detects reference background color, pre-processes pose images (background match + square padding)
-3. Connects a WebSocket to receive real-time execution results
-4. Submits all workflows with concurrency control
-5. Downloads completed renders as they finish via WebSocket output events
+`poses/` contains OpenPose skeleton images from [Pose Depot](https://github.com/pose-depot/pose-depot) — `poses/F/` (61 female) and `poses/M/` (61 male) — for the `anypose` pipeline.
+
+---
+
+## The Weeds — models, tests, and hard-won lessons
+
+Everything below is *why the defaults are the defaults*. Skip it unless you're extending the pipeline.
+
+### The grey-patch artifact → why Kontext for the base
+
+The original pipeline normalized the base pose with **Qwen Image Edit** directly. On glossy references (painted minis, 3D renders) it consistently painted **muddy grey-olive blotches** over the figure's specular highlights (cheekbones, forehead, knuckles, shoulders) during the repose. It was robust to everything we threw at it — unchanged by seed, resolution, step count, prompt wording, LoRA strength, or matte-preprocessing the input.
+
+Models tried, on the hard cases:
+
+| Model | Grey artifact | Fidelity | Notes |
+|-------|---------------|----------|-------|
+| Qwen 2511 (4-step) | ❌ present | ✅ faithful | the original default |
+| Qwen 2511 (8-step LoRA) | ⚠️ reduced, **seed-dependent** | ✅ | not reliably clean; and non-deterministic per seed |
+| Qwen 2509 | ✅ clean skin | ❌ drifts outfit/identity | reimagines the character |
+| **FLUX.1 Kontext** | ✅ **clean** | ✅ **faithful** | **chosen** — different architecture, matte render, keeps the painted-mini look |
+| FireRed-Image-Edit 1.1 | ✅ clean | ⚠️ drops back-items (capes) | good front repose, but can't keep a cloak generically |
+| HiDream-E1.1 | — | — | couldn't get its node graph running headless |
+| BRIA RMBG node | — | — | hosted-API node, **requires interactive login** — unusable headless |
+
+Key finding — **propagation**: the artifact only appears when Qwen reposes a *glossy* input. Feed Qwen a clean matte source and it stays clean. So we only need Kontext at the two source renders; the ~90 downstream Qwen renders inherit clean skin for free.
+
+### Held items and gear — conditional, never enumerated
+
+Preserving a held sword / wand / prop across a repose is a prompt problem. **Enumerating** item types ("keep any cloak, bow, sword…") makes the model *hallucinate* that gear onto every character (a plain character sprouts a quiver). The fix is a **conditional, non-enumerated** clause: "if the character holds something, keep it; if a hand is empty, keep it empty." The **hero** render sidesteps this entirely for outfits/lighting by not reposing — it keeps whatever the original held.
+
+### White backgrounds — a clamp, not a flood-fill (and not AI matting)
+
+The Kontext/Qwen renders already come out on a near-white background (prompt-enforced, corners ~248–254). The old `flatten_to_white_bg()` was a connected-component **flood-fill** that classified any light, low-saturation region as background — which **bled into white garments** (blown-out sleeve patches) and hardened hair edges. We replaced it with a **per-pixel near-white clamp** (channels ≥ 250 → pure white): it can't touch a shaded white shirt (mid-200s) or soft hair blends, and needs no connectivity/scipy.
+
+AI background removers (BRIA, BiRefNet/BEN2) were evaluated for perfect mattes but weren't worth it: BRIA needs a login (headless-hostile), and the render is already clean enough that a safe clamp wins on simplicity.
+
+### Cache-hang recovery
+
+Comfy Cloud returns `execution_cached` for a repeated (image, seed, prompt) with **no `executed` websocket message**, so the client would block until the timeout. Two mitigations: **change the seed** to force a fresh render, and an automatic recovery in the websocket loop — when the socket goes quiet and the cloud queue is empty but jobs are still pending, it fetches the finished renders from `/api/history_v2` instead of hanging.
+
+### Framing tiers
+
+The turnaround's medium/close crops are set in `prep_angle_references.py` as a fraction of figure height (`TIERS = {"medium": 0.517, "close": 0.36}`). Larger = wider shot, smaller = tighter. Tuned for stylized (large-head) characters; adjust per style.
 
 ---
 
@@ -328,28 +216,15 @@ Generate a rigged 3D mesh from a single character image using [SAM 3D Body](http
 
 ![Pose to 3D rig](examples/pose_to_rig.png)
 
-## Step 1: Extract 3D body from image
-
 ```bash
+# 1. Extract 3D body from image (GPU A10G via Modal)
 cd sam3d_pipeline
 modal run run_sam3body.py --image-path /path/to/front_eyelevel.png
+
+# 2. Build rig and export (sample Blender importer)
+#    reads exports/character_full_data.json -> mesh + 127-joint skeleton + skin weights -> FBX/glTF
+blender --python blender_import_rig.py
 ```
-
-This runs SAM 3D Body inference on a GPU (A10G) via Modal and saves:
-- `sam3body_result.json` — 3D keypoints and joint coordinates
-- `exports/character_mesh.glb` — body mesh (GLB format)
-- `exports/character_mesh.obj` — body mesh (OBJ format)
-- `exports/character_full_data.json` — full data with vertices, faces, skeleton hierarchy, and skin weights
-
-## Step 2: Build rig and export
-
-A sample import script (`blender_import_rig.py`) is included that reads `exports/character_full_data.json` and creates:
-- Mesh with correct topology
-- 127-joint skeleton hierarchy
-- Vertex groups with skin weights
-- Exports as FBX and glTF
-
-The exported FBX/glTF files can be loaded into any DCC application.
 
 ![3D rig](examples/3d_rig.png)
 
