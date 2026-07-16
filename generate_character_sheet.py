@@ -4,10 +4,16 @@ Generate Character Sheet — End-to-End Pipeline
 ================================================
 Fully automated, single-command character sheet:
 
-  base normalize (Qwen-native res)  ->  2x AI upscale + tiered crops
+  Flux Kontext -> clean matte NEUTRAL base + clean matte HERO re-render
+    ->  base: 2x AI upscale + tiered crops
     ->  combined-angle turnaround (crop = framing, 2511 LoRA = camera angle)
-    ->  poses / expressions / outfits / lighting
+    ->  poses / expressions (from base)  +  outfits / lighting (from hero)
     ->  PowerPoint
+
+Kontext is a different architecture than the Qwen edit models, so it renders clean
+matte skin where Qwen paints grey-olive blotches over a glossy reference's specular
+highlights during a repose. Feeding the two Kontext sources into the Qwen passes
+keeps the whole sheet artifact-free.
 
 Designed to run unattended: the multi-angle views auto-retry (new seed) if the
 LoRA drifts to a non-white/scene background, so you can batch several characters
@@ -175,6 +181,7 @@ def main():
     os.makedirs(base_dir, exist_ok=True)
 
     base_pose_dir = os.path.join(base_dir, "base")
+    hero_dir = os.path.join(base_dir, "hero")
     angles_dir = os.path.join(base_dir, "angles_combo")
     poses_dir = os.path.join(base_dir, "poses_prompt")
     expressions_dir = os.path.join(base_dir, "expressions")
@@ -184,23 +191,44 @@ def main():
     start = time.time()
     results = {}
 
-    # Pass 0: normalize to a front standing pose at Qwen-native res, then prep the
-    # sharp full/medium/close framing references (2x upscale + tiered crops).
-    source_image = args.image
+    # Pass 0: Flux Kontext turns the one glossy original into two CLEAN MATTE sources.
+    # The Qwen edit models paint grey-olive blotches over a glossy reference's specular
+    # highlights whenever they repose it; Kontext (a different architecture) re-renders
+    # clean matte skin, so every downstream Qwen pass then starts artifact-free.
+    #   0a: kontext_base — neutral standing pose  -> angles / poses / expressions
+    #   0b: kontext_hero — original pose, matte re-render (keeps held items, no repose)
+    #        -> outfits / lighting
+    KONTEXT_ARGS = ["--force", "--steps", "20"]
+    source_image = args.image     # neutral-base source (angles / poses / expressions)
+    hero_image = args.image       # hero source (outfits / lighting); falls back to original
     have_refs = False
     if "base" not in args.skip:
-        ok = run_pass(args.image, "standing_relaxed", args.seed, args.concurrency,
-                      base_pose_dir, extra_args=["--megapixels", "1.76", "--force"])
+        # 0a: clean neutral base -> tiered full/medium/close framing references
+        ok = run_pass(args.image, "kontext_base", args.seed, args.concurrency,
+                      base_pose_dir, extra_args=KONTEXT_ARGS)
         base_candidate = os.path.join(base_pose_dir, "standing_relaxed.png")
         if ok and os.path.exists(base_candidate):
             have_refs = run_prep(base_candidate, base_pose_dir)
-            source_image = base_candidate  # now the sharp 1024 full reference
+            source_image = base_candidate  # sharp clean base reference
             results["base"] = have_refs
         else:
-            print("WARNING: base pose failed — using original input, skipping combined angles")
+            print("WARNING: kontext base failed — using original input, skipping combined angles")
             results["base"] = False
+        # 0b: clean matte hero-pose re-render -> source for outfits & lighting
+        hok = run_pass(args.image, "kontext_hero", args.seed, args.concurrency,
+                       hero_dir, extra_args=KONTEXT_ARGS)
+        hero_candidate = os.path.join(hero_dir, "hero.png")
+        if hok and os.path.exists(hero_candidate):
+            hero_image = hero_candidate
+            results["hero"] = True
+        else:
+            print("WARNING: kontext hero failed — outfits/lighting will use the original input")
+            results["hero"] = False
     else:
         have_refs = all(os.path.exists(os.path.join(base_pose_dir, r)) for r in TIER_REF.values())
+        hero_candidate = os.path.join(hero_dir, "hero.png")
+        if os.path.exists(hero_candidate):
+            hero_image = hero_candidate
         print("Skipping: base" + ("" if have_refs else " (no prep refs — combined angles unavailable)"))
 
     # Pass 1: combined-angle turnaround (needs the prepped references).
@@ -226,13 +254,15 @@ def main():
     else:
         print("Skipping: expressions")
 
-    # Pass 4 & 5: Outfits and Lighting — from the ORIGINAL input (hero pose).
+    # Pass 4 & 5: Outfits and Lighting — from the CLEAN hero-pose re-render (Kontext),
+    # which keeps the hero framing but without the glossy speculars that make Qwen
+    # blotch. Falls back to the original input if the hero render was unavailable.
     if "outfits" not in args.skip:
-        results["outfits"] = run_pass(args.image, "outfits", args.seed, args.concurrency, outfits_dir)
+        results["outfits"] = run_pass(hero_image, "outfits", args.seed, args.concurrency, outfits_dir)
     else:
         print("Skipping: outfits")
     if "lighting" not in args.skip:
-        results["lighting"] = run_pass(args.image, "lighting", args.seed, args.concurrency, lighting_dir)
+        results["lighting"] = run_pass(hero_image, "lighting", args.seed, args.concurrency, lighting_dir)
     else:
         print("Skipping: lighting")
 

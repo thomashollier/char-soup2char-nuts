@@ -394,6 +394,41 @@ STANDING_RELAXED_PROMPT_NANOBANANA = (
     "body proportions."
 )
 
+# ═══════════════════════════════════════════════════════════════════════════
+# FLUX KONTEXT — clean matte source renders
+# ═══════════════════════════════════════════════════════════════════════════
+# The Qwen edit models paint muddy grey-olive blotches over a glossy reference's
+# specular highlights whenever they repose it. Flux Kontext (a different
+# architecture) re-renders clean matte skin instead, so we use it up front to
+# turn the one glossy original into two clean matte sources:
+#   • kontext_base — a neutral standing pose (feeds angles / poses / expressions)
+#   • kontext_hero — the original hero pose, matte re-render (feeds outfits /
+#     lighting / title; keeps held items because it does not repose)
+# Every downstream Qwen pass then starts from a clean input and stays artifact-free.
+
+# Conditional, NON-enumerated: keep held objects only if the reference has them,
+# keep empty hands empty. Enumerating item types makes the model hallucinate them
+# onto every character, so we never name specific gear.
+HELD_ITEMS_CLAUSE = (
+    " If the character holds or grips any object in a hand in the reference image, they must "
+    "continue to firmly hold that exact same object in the same hand, gripped and lowered at "
+    "their side, and it must remain clearly visible. If a hand is empty in the reference, keep "
+    "it empty; never place a new object into an empty hand."
+)
+
+KONTEXT_BASE_PROMPT = STANDING_RELAXED_PROMPT + HELD_ITEMS_CLAUSE
+
+# Keep the ORIGINAL pose, just re-render it clean/matte on white — an artifact-free
+# hero source for the outfit/lighting/title passes.
+KONTEXT_HERO_PROMPT = (
+    "Keep the character's exact pose, stance, body position, arm and hand positions, and "
+    "camera framing identical to the reference image — do not repose or move anything, and "
+    "keep the same outfit, identity, hair, and every detail and accessory. Render the "
+    "character with clean, smooth, evenly painted matte surfaces without glossy sheen or "
+    "bright specular hotspots. Place the character on a solid pure white background with no "
+    "scene, floor, shadow, or props."
+)
+
 NANOBANANA_SYSTEM_PROMPT = (
     "You are an expert image-generation engine. You must ALWAYS produce an image.\n"
     "Interpret all user input—regardless of format, intent, or abstraction—as literal "
@@ -479,6 +514,8 @@ PIPELINE_SAVE_NODE = {
     "poses_prompt":     "10",
     "angles_prompt":    "10",
     "standing_relaxed": "10",
+    "kontext_base":     "13",
+    "kontext_hero":     "13",
 }
 
 
@@ -505,6 +542,8 @@ def build_workflow(
             image_filename, pose_image_filename, prompt, seed, steps,
             guidance_scale, lora_strength_lightning, filename_prefix,
         )
+    elif pipeline in ("kontext_base", "kontext_hero"):
+        wf = build_workflow_kontext(image_filename, prompt, seed, steps, filename_prefix)
     elif pipeline in ("expressions", "lighting", "outfits", "poses_prompt", "angles_prompt", "standing_relaxed"):
         wf = build_workflow_expressions(
             image_filename, prompt, seed, steps, guidance_scale,
@@ -905,6 +944,29 @@ QWEN_EDIT_MODELS = {
         "clip":      "qwen_2.5_vl_7b_fp8_scaled.safetensors",
     },
 }
+
+
+def build_workflow_kontext(image_filename, prompt, seed=42, steps=20, filename_prefix="kontext"):
+    """Flux.1 Kontext reference-edit workflow (different architecture from Qwen, so it
+    renders clean matte skin instead of the grey-blotch artifact). Used for the two
+    clean source renders (kontext_base neutral pose, kontext_hero original pose)."""
+    return {
+        "1":  {"class_type": "LoadImage", "inputs": {"image": image_filename}},
+        "2":  {"class_type": "UNETLoader", "inputs": {"unet_name": "flux1-dev-kontext_fp8_scaled.safetensors", "weight_dtype": "default"}},
+        "3":  {"class_type": "DualCLIPLoader", "inputs": {"clip_name1": "clip_l.safetensors", "clip_name2": "t5xxl_fp8_e4m3fn.safetensors", "type": "flux"}},
+        "4":  {"class_type": "VAELoader", "inputs": {"vae_name": "ae.safetensors"}},
+        "5":  {"class_type": "FluxKontextImageScale", "inputs": {"image": ["1", 0]}},
+        "6":  {"class_type": "VAEEncode", "inputs": {"pixels": ["5", 0], "vae": ["4", 0]}},
+        "7":  {"class_type": "CLIPTextEncode", "inputs": {"text": prompt, "clip": ["3", 0]}},
+        "8":  {"class_type": "ReferenceLatent", "inputs": {"conditioning": ["7", 0], "latent": ["6", 0]}},
+        "9":  {"class_type": "FluxGuidance", "inputs": {"conditioning": ["8", 0], "guidance": 2.5}},
+        "10": {"class_type": "ConditioningZeroOut", "inputs": {"conditioning": ["7", 0]}},
+        "11": {"class_type": "KSampler", "inputs": {"seed": seed, "steps": steps, "cfg": 1.0,
+                "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0,
+                "model": ["2", 0], "positive": ["9", 0], "negative": ["10", 0], "latent_image": ["6", 0]}},
+        "12": {"class_type": "VAEDecode", "inputs": {"samples": ["11", 0], "vae": ["4", 0]}},
+        "13": {"class_type": "SaveImage", "inputs": {"filename_prefix": filename_prefix, "images": ["12", 0]}},
+    }
 
 
 def build_workflow_expressions(
@@ -1485,44 +1547,31 @@ def cleanup_checkerboard(output_path, ref_image_path):
         pass  # non-critical, skip if it fails
 
 
-def flatten_to_white_bg(output_path):
-    """Force a solid white background.
+def flatten_to_white_bg(output_path, white_thresh=250):
+    """Snap the already-near-white backdrop to a clean pure #FFFFFF.
 
-    Selects background-like pixels — light AND low-saturation, i.e. the white/grey
-    of a plain backdrop or a transparency checkerboard (but NOT the colored,
-    saturated character) — then keeps only the connected component(s) that touch
-    the image border and paints them pure white. Interior light-but-desaturated
-    areas (teeth, pearls, white cloth) are untouched because they aren't
-    border-connected, and colored scene backgrounds are left alone because they
-    aren't low-saturation.
+    The render already targets a white background via the prompt (and the base/hero
+    are Flux Kontext renders that come out clean white — corners ~248-254). We only
+    snap pixels that are *already* near-pure-white in every channel (>= white_thresh)
+    up to 255, so the solid backdrop becomes perfectly white while the SUBJECT is left
+    alone: a white shirt (mid-200s with shading) stays, and soft anti-aliased hair
+    edges (blends below the threshold) stay soft.
+
+    This deliberately replaces the previous connected-component flood-fill, which
+    classified any light, low-saturation region as background and bled into light
+    garments — producing bright blown-out patches on white sleeves — and hardened
+    hair edges. A plain per-pixel near-white clamp cannot do either.
     """
     try:
         from PIL import Image
         import numpy as np
         img = Image.open(output_path).convert("RGB")
-        a = np.array(img).astype(int)
-        mn = a.min(axis=2)
-        sat = a.max(axis=2) - mn
-        bg_like = (mn > 160) & (sat < 30)          # white/grey backdrop or checkerboard
-        if not bg_like.any():
+        a = np.array(img)
+        near_white = a.min(axis=2) >= white_thresh
+        if not near_white.any():
             return
-        from scipy import ndimage
-        # Sever thin light "bridges" (e.g. a pale garment that touches the white
-        # background) with a morphological opening, so the border-connected fill
-        # can't bleed through a narrow neck into the subject and punch holes in it.
-        opened = ndimage.binary_opening(bg_like, iterations=3)
-        lbl, _ = ndimage.label(opened)
-        border = set(lbl[0, :]) | set(lbl[-1, :]) | set(lbl[:, 0]) | set(lbl[:, -1])
-        border.discard(0)
-        if not border:
-            return
-        # Grow the border-connected background back toward its original edge, but
-        # stay within the opened region so severed bridges are not re-crossed.
-        seed = np.isin(lbl, list(border))
-        mask = ndimage.binary_dilation(seed, iterations=3) & opened
-        arr = np.array(img)
-        arr[mask] = (255, 255, 255)
-        Image.fromarray(arr).save(output_path)
+        a[near_white] = (255, 255, 255)
+        Image.fromarray(a).save(output_path)
     except Exception:
         pass  # non-critical, skip if it fails
 
@@ -1545,6 +1594,42 @@ async def cloud_download(session, api_key, filename, output_path):
                 f.write(await resp.read())
         else:
             raise RuntimeError(f"Download failed ({resp.status}): {await resp.text()}")
+
+
+async def cloud_queue_empty(session, api_key):
+    """True if the cloud queue has nothing pending or running — i.e. our jobs have
+    already left the cloud. Used to detect the cache-hang (a cached render returns
+    `execution_cached` with no `executed` websocket message, so the client would
+    otherwise block on the socket until the timeout)."""
+    try:
+        async with session.get(f"{CLOUD_BASE}/api/queue",
+                               headers={"X-API-Key": api_key}) as r:
+            if r.status != 200:
+                return False
+            q = await r.json()
+        return not q.get("queue_pending") and not q.get("queue_running")
+    except Exception:
+        return False
+
+
+async def cloud_history_outputs(session, api_key):
+    """Return {prompt_id: outputs} for completed jobs from /api/history_v2, so a
+    render whose websocket `executed` message was never delivered (cache-hang) can
+    still be fetched by prompt_id."""
+    try:
+        async with session.get(f"{CLOUD_BASE}/api/history_v2",
+                               headers={"X-API-Key": api_key}) as r:
+            if r.status != 200:
+                return {}
+            data = await r.json()
+    except Exception:
+        return {}
+    out = {}
+    for entry in data.get("history", []):
+        pid = entry.get("prompt_id")
+        if pid and entry.get("status", {}).get("completed"):
+            out[pid] = entry.get("outputs", {})
+    return out
 
 
 async def _ws_collect_outputs(api_key, prompt_ids, timeout=600):
@@ -1696,9 +1781,43 @@ async def _process_batch_ws(jobs, args, api_key, session):
 
         submit_task = asyncio.create_task(submit_all())
 
+        # Cache-hang recovery: a cached render returns `execution_cached` with no
+        # `executed` websocket message, so the pid would sit in `pending` until the
+        # full timeout. When the websocket goes quiet, if the cloud queue is empty
+        # yet jobs are still pending, fetch their finished renders from history.
+        async def recover_stalled():
+            nonlocal ok, fail
+            if getattr(args, 'get_pose', False):
+                return  # multi-output pose mode: leave to normal ws handling
+            if not await cloud_queue_empty(session, api_key):
+                return  # jobs are still genuinely running
+            hist = await cloud_history_outputs(session, api_key)
+            save_node = "4" if args.engine == "nanobanana" else PIPELINE_SAVE_NODE.get(args.pipeline, "2")
+            for pid in list(pending):
+                outputs = hist.get(pid)
+                if not outputs:
+                    continue
+                images = (outputs.get(save_node) or {}).get("images", [])
+                idx, fname, out, prompt = pid_to_job[pid]
+                if images:
+                    try:
+                        await cloud_download(session, api_key, images[0]["filename"], out)
+                        cleanup_checkerboard(out, args.image)
+                        flatten_to_white_bg(out)
+                        if args.label:
+                            add_label_below(out, args.label)
+                        print(f"  [{idx:3d}/{total}] ✓ {fname}  (recovered from cache)")
+                        ok += 1
+                    except Exception as e:
+                        print(f"  [{idx:3d}/{total}] ✗ {fname}  (cache-recover download: {e})")
+                        fail += 1
+                    pending.discard(pid)
+
         # Listen on websocket concurrently with submission
         skipped = 0
         start = time.time()
+        last_msg = time.time()
+        CACHE_STALL_SECS = 15  # quiet-socket grace before probing for a cache-hang
 
         # Wait until at least one job is submitted or all are done
         while not pending and not submit_task.done():
@@ -1712,7 +1831,14 @@ async def _process_batch_ws(jobs, args, api_key, session):
             try:
                 msg = await asyncio.wait_for(ws.receive(), timeout=5)
             except asyncio.TimeoutError:
+                # No websocket traffic. If submission is done and jobs are still
+                # pending after a quiet stretch, we're likely cache-hung — recover
+                # the finished renders from history rather than blocking to timeout.
+                if submit_task.done() and pending and (time.time() - last_msg) > CACHE_STALL_SECS:
+                    await recover_stalled()
+                    last_msg = time.time()  # reset so we probe at most once per interval
                 continue
+            last_msg = time.time()
             if msg.type == aiohttp.WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
@@ -1873,8 +1999,9 @@ def main():
     p.add_argument("--elevations", default=None, help="Subset, e.g. -30,0,30,60")
     p.add_argument("--distances", default=None, help="Subset, e.g. 0.6,1.0,1.8")
     p.add_argument("--pipeline", default="2511",
-                   choices=["2509", "2511", "anypose", "expressions", "lighting", "outfits", "poses_prompt", "angles_prompt", "standing_relaxed"],
-                   help="Model pipeline: 2509, 2511 (default), anypose, expressions, lighting, outfits, poses_prompt, angles_prompt, or standing_relaxed")
+                   choices=["2509", "2511", "anypose", "expressions", "lighting", "outfits", "poses_prompt", "angles_prompt", "standing_relaxed", "kontext_base", "kontext_hero"],
+                   help="Model pipeline: 2509, 2511 (default), anypose, expressions, lighting, outfits, poses_prompt, angles_prompt, standing_relaxed, "
+                        "kontext_base (clean matte neutral base via Flux Kontext), or kontext_hero (clean matte original-pose re-render)")
     p.add_argument("--pose-dir", default=None,
                    help="Directory of pose images (required for --pipeline anypose)")
     p.add_argument("--prompt-append", default="",
@@ -1955,6 +2082,17 @@ def main():
         jobs = [(None, None, None,
                  srp + suffix,
                  "standing_relaxed.png")]
+    elif args.pipeline == "kontext_base":
+        # Clean matte neutral base (Flux Kontext); output name matches standing_relaxed
+        # so the existing prep/derive steps work unchanged.
+        jobs = [(None, None, None,
+                 KONTEXT_BASE_PROMPT + suffix,
+                 "standing_relaxed.png")]
+    elif args.pipeline == "kontext_hero":
+        # Clean matte re-render of the ORIGINAL hero pose (Flux Kontext).
+        jobs = [(None, None, None,
+                 KONTEXT_HERO_PROMPT + suffix,
+                 "hero.png")]
     elif args.pipeline == "expressions":
         expr_items = list(EXPRESSIONS.items())
         if args.expressions:
